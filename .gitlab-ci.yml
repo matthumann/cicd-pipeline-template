@@ -1,0 +1,184 @@
+# =============================================================================
+# GitLab CI/CD pipeline — branch-aware reference template
+#
+# Branching model (see docs/branching-strategy.md):
+#   main            production; protected; deploys to prod behind a manual gate
+#   dev             integration; auto-deploys to the dev environment
+#   feature/*       new work        -> MR into dev   (validate + test + build only)
+#   bugfix/*        non-urgent fix  -> MR into dev   (validate + test + build only)
+#   hotfix/*        urgent prod fix -> MR into main  (validate + test + build only)
+#   release/*       stabilization   -> MR into main  (full build, no auto deploy)
+#
+# Promotion path:  feature/bugfix -> dev -> (release ->) main -> staging -> prod
+# Every job that mutates an environment is idempotent and has a rollback path.
+# =============================================================================
+
+stages:
+  - validate
+  - test
+  - build
+  - deploy
+  - rollback
+
+variables:
+  PYTHON_IMAGE: "python:3.12-slim"
+  # Single source of truth for the build artifact name, reused across stages.
+  ARTIFACT_NAME: "app-${CI_COMMIT_SHORT_SHA}.tar.gz"
+
+default:
+  image: $PYTHON_IMAGE
+  # Cache pip downloads so feature-branch pipelines stay fast.
+  cache:
+    key:
+      files:
+        - requirements.txt
+    paths:
+      - .cache/pip
+  before_script:
+    - export PIP_CACHE_DIR="${CI_PROJECT_DIR}/.cache/pip"
+    - python -m pip install --upgrade pip
+    - pip install -r requirements.txt
+
+# -----------------------------------------------------------------------------
+# Reusable rule sets (DRY — referenced via !reference in each job)
+# -----------------------------------------------------------------------------
+.rules:
+  # Validation/test/build run on every branch and every merge request.
+  on_every_change: &on_every_change
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
+  # dev branch only.
+  on_dev: &on_dev
+    - if: '$CI_COMMIT_BRANCH == "dev"'
+  # main branch only.
+  on_main: &on_main
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# =============================================================================
+# VALIDATE — fast feedback, runs first on every branch and MR
+# =============================================================================
+lint:
+  stage: validate
+  rules: *on_every_change
+  script:
+    - pip install ruff
+    - ruff check src tests
+    - echo "Lint passed."
+
+# Confirms branch names follow the convention before anything else burns minutes.
+branch-naming:
+  stage: validate
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^(main|dev|feature\/.+|bugfix\/.+|hotfix\/.+|release\/.+)$/'
+      when: on_success
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: on_success
+    - when: always
+  script:
+    - |
+      branch="${CI_COMMIT_BRANCH:-$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME}"
+      echo "Validating branch name: $branch"
+      if echo "$branch" | grep -Eq '^(main|dev|(feature|bugfix|hotfix|release)/.+)$'; then
+        echo "OK — '$branch' matches the branching convention."
+      else
+        echo "ERROR — '$branch' must be one of: main, dev, feature/*, bugfix/*, hotfix/*, release/*"
+        exit 1
+      fi
+
+# =============================================================================
+# TEST — unit tests with coverage, runs on every branch and MR
+# =============================================================================
+unit-test:
+  stage: test
+  rules: *on_every_change
+  script:
+    - pip install pytest pytest-cov
+    - pytest --cov=src --cov-report=term --cov-report=xml --junitxml=report.xml
+  coverage: '/TOTAL.+?(\d+\%)$/'
+  artifacts:
+    when: always
+    reports:
+      junit: report.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+
+# =============================================================================
+# BUILD — package the deployable artifact, runs on every branch and MR
+# =============================================================================
+build:
+  stage: build
+  rules: *on_every_change
+  script:
+    - echo "Building $ARTIFACT_NAME from $CI_COMMIT_SHORT_SHA"
+    - tar -czf "$ARTIFACT_NAME" src/ requirements.txt
+    - echo "$CI_COMMIT_SHA" > BUILD_SHA
+  artifacts:
+    name: "$ARTIFACT_NAME"
+    paths:
+      - "$ARTIFACT_NAME"
+      - BUILD_SHA
+    expire_in: 1 week
+
+# =============================================================================
+# DEPLOY — environment promotion (hidden template + per-env jobs)
+# =============================================================================
+.deploy_template:
+  stage: deploy
+  script:
+    - echo "Deploying $ARTIFACT_NAME ($CI_COMMIT_SHORT_SHA) to $DEPLOY_ENV"
+    - bash scripts/validate.sh "$DEPLOY_ENV"
+    - bash scripts/deploy.sh "$DEPLOY_ENV" "$ARTIFACT_NAME"
+    - echo "Deployed to $DEPLOY_ENV."
+
+# dev: auto-deploy on every push to the dev branch (continuous deployment).
+deploy:dev:
+  extends: .deploy_template
+  variables:
+    DEPLOY_ENV: "dev"
+  environment:
+    name: dev
+    url: https://dev.example.com
+  rules: *on_dev
+
+# staging: auto-deploy when main updates (release candidate verification).
+deploy:staging:
+  extends: .deploy_template
+  variables:
+    DEPLOY_ENV: "staging"
+  environment:
+    name: staging
+    url: https://staging.example.com
+  rules: *on_main
+
+# prod: gated behind a MANUAL trigger — the SOX-style release approval step.
+# Requires that staging deployed first (needs:), so prod can never run alone.
+deploy:prod:
+  extends: .deploy_template
+  variables:
+    DEPLOY_ENV: "prod"
+  environment:
+    name: prod
+    url: https://www.example.com
+  needs: ["deploy:staging"]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+      allow_failure: false   # pipeline is "blocked", not "passed", until approved
+
+# =============================================================================
+# ROLLBACK — manual, available on main, re-points prod at the previous release
+# =============================================================================
+rollback:prod:
+  stage: rollback
+  variables:
+    DEPLOY_ENV: "prod"
+  environment:
+    name: prod
+    action: rollback
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+      allow_failure: true
+  script:
+    - bash scripts/rollback.sh "$DEPLOY_ENV"

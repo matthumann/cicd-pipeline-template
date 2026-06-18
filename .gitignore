@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+report.xml
+
+# Build artifacts
+app-*.tar.gz
+BUILD_SHA
+
+# Pipeline cache
+.cache/
+
+# OS / editor
+.DS_Store
+desktop.ini
+.idea/
+.vscode/

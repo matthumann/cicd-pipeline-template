@@ -1,0 +1,4 @@
+# Runtime dependencies for the sample app. (Tooling — ruff, pytest — is
+# installed in the pipeline, not pinned as a runtime dep.) The sample app has
+# no third-party runtime deps; this file exists so the pipeline's install step
+# is realistic. Add real dependencies here.
