@@ -1,0 +1,14 @@
+# Force LF for files executed on Linux CI runners. CRLF in a .sh file makes
+# bash fail with `\r: command not found`, so normalize regardless of host OS.
+* text=auto eol=lf
+*.sh   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.py   text eol=lf
+*.md   text eol=lf
+
+# Binary files git should never touch
+*.png  binary
+*.jpg  binary
+*.pdf  binary
+*.gz   binary
