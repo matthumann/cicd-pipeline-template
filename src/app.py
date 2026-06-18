@@ -12,6 +12,11 @@ def add(a: float, b: float) -> float:
     return a + b
 
 
+def greet(name: str) -> str:
+    """Return a friendly greeting."""
+    return f"Hello, {name}!"
+
+
 def health() -> dict[str, str]:
     """A trivial health check a deploy smoke test could call."""
     return {"status": "ok"}
