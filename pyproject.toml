@@ -1,0 +1,15 @@
+# Tooling config for the sample app. Kept minimal — the repo is a pipeline
+# template, not a packaged library.
+
+[tool.pytest.ini_options]
+# Put the repo root on sys.path so `import src.app` resolves under the src/
+# layout without an installable package.
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.coverage.run]
+source = ["src"]
