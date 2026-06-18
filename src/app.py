@@ -6,10 +6,17 @@ template, not the app.
 """
 from __future__ import annotations
 
+import os  # DEMO: unused import — ruff will flag this as F401
+
 
 def add(a: float, b: float) -> float:
     """Return the sum of two numbers."""
     return a + b
+
+
+def greet(name: str) -> str:
+    """Return a friendly greeting."""
+    return f"Hello, {name}!"
 
 
 def health() -> dict[str, str]:
