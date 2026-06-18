@@ -6,8 +6,6 @@ template, not the app.
 """
 from __future__ import annotations
 
-import os  # DEMO: unused import — ruff will flag this as F401
-
 
 def add(a: float, b: float) -> float:
     """Return the sum of two numbers."""
